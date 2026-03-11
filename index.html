@@ -476,47 +476,129 @@ body{
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
+// Pre-convert all external images to base64 on page load
+async function imgToBase64(url) {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    const blob = await res.blob();
+    return new Promise(resolve => {
+      const r = new FileReader();
+      r.onloadend = () => resolve(r.result);
+      r.readAsDataURL(blob);
+    });
+  } catch(e) {
+    return null;
+  }
+}
+
+// Replace all external img src with base64 so html2canvas can see them
+async function preloadImages() {
+  const imgs = document.querySelectorAll('img[src^="http"]');
+  for (const img of imgs) {
+    const b64 = await imgToBase64(img.src);
+    if (b64) img.src = b64;
+  }
+}
+
+window.addEventListener('load', () => {
+  preloadImages();
+});
+
 async function saveAsPNG() {
-  const btn = document.getElementById('saveBtn');
-  const status = document.getElementById('save-status');
+  const btn     = document.getElementById('saveBtn');
+  const status  = document.getElementById('save-status');
   const btnWrap = document.getElementById('save-btn-wrap');
 
   btn.innerHTML = '<span style="font-size:24px">⏳</span> ရေးဆွဲနေသည်...';
-  btn.disabled = true;
+  btn.disabled  = true;
   status.style.display = 'block';
-  status.textContent = 'ပုံဖန်တီးနေသည်... ခဏစောင့်ပါ';
+  status.textContent   = 'ပုံဖန်တီးနေသည်... ခဏစောင့်ပါ';
   btnWrap.style.display = 'none';
 
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 200));
 
   try {
-    const target = document.querySelector('.wrap');
-    const canvas = await html2canvas(target, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: '#1a0030',
-      logging: false,
-      width: 1080,
-      height: target.scrollHeight,
-      windowWidth: 1080,
+    const wrap   = document.querySelector('.wrap');
+    const W      = 1080;
+    const H      = wrap.scrollHeight;
+    const SCALE  = 2;
+
+    // ── Step 1: capture .wrap content (no bg) ──
+    const contentCanvas = await html2canvas(wrap, {
+      scale:           SCALE,
+      useCORS:         true,
+      allowTaint:      true,
+      backgroundColor: null,
+      logging:         false,
+      width:           W,
+      height:          H,
+      windowWidth:     W,
+      scrollX:         0,
+      scrollY:         -window.scrollY,
     });
 
-    const link = document.createElement('a');
+    // ── Step 2: build final canvas = bg + overlay + content ──
+    const final  = document.createElement('canvas');
+    final.width  = W * SCALE;
+    final.height = H * SCALE;
+    const ctx    = final.getContext('2d');
+
+    // Draw background image
+    const bgEl  = document.querySelector('.bg');
+    const bgUrl = getComputedStyle(bgEl).backgroundImage.replace(/url\(["']?|["']?\)/g,'');
+    const bgImg = new Image();
+    bgImg.crossOrigin = 'anonymous';
+
+    await new Promise(resolve => {
+      bgImg.onload = resolve;
+      bgImg.onerror = resolve;
+      bgImg.src = bgUrl;
+    });
+
+    if (bgImg.naturalWidth) {
+      // cover fit
+      const scale = Math.max((W * SCALE) / bgImg.naturalWidth, (H * SCALE) / bgImg.naturalHeight);
+      const dw = bgImg.naturalWidth  * scale;
+      const dh = bgImg.naturalHeight * scale;
+      const dx = ((W * SCALE) - dw) / 2;
+      const dy = ((H * SCALE) - dh) / 2;
+      ctx.drawImage(bgImg, dx, dy, dw, dh);
+    } else {
+      ctx.fillStyle = '#1a0030';
+      ctx.fillRect(0, 0, final.width, final.height);
+    }
+
+    // Dark overlay
+    ctx.fillStyle = 'rgba(15,3,45,0.72)';
+    ctx.fillRect(0, 0, final.width, final.height);
+
+    // Sparkles / grid lines
+    ctx.strokeStyle = 'rgba(0,150,255,0.06)';
+    ctx.lineWidth = 1;
+    const gs = 55 * SCALE;
+    for (let x = 0; x < final.width;  x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x, final.height); ctx.stroke(); }
+    for (let y = 0; y < final.height; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(final.width, y);  ctx.stroke(); }
+
+    // Draw content on top
+    ctx.drawImage(contentCanvas, 0, 0);
+
+    // ── Step 3: download ──
+    const link    = document.createElement('a');
     link.download = 'JM_Diamond_Price.png';
-    link.href = canvas.toDataURL('image/png', 1.0);
+    link.href     = final.toDataURL('image/png', 1.0);
     link.click();
 
-    btnWrap.style.display = 'flex';
     status.textContent = '✅ သိမ်းပြီးပါပြီ!';
     setTimeout(() => { status.style.display = 'none'; }, 3000);
+
   } catch(e) {
-    btnWrap.style.display = 'flex';
     status.textContent = '❌ Error: ' + e.message;
+    console.error(e);
   }
 
+  btnWrap.style.display = 'flex';
   btn.innerHTML = '<span style="font-size:24px">💾</span> PNG သိမ်းမည်';
-  btn.disabled = false;
+  btn.disabled  = false;
 }
 </script>
 </body>
